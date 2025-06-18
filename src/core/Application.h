@@ -3,7 +3,7 @@
 
 #include <QObject>
 #include <QQmlEngine>
-#include "PasswordManager.h"
+#include "../PasswordManager.h"
 
 /**
  * @brief 应用程序主类

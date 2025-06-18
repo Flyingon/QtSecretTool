@@ -4,6 +4,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QDebug>
+#include "../database/DatabaseManager.h"
 
 // 静态成员初始化
 Application* Application::s_instance = nullptr;
@@ -67,6 +68,13 @@ QString Application::buildDate() const
 bool Application::initialize()
 {
     qInfo() << "Initializing application...";
+
+    // 初始化数据库管理器
+    DatabaseManager *dbManager = DatabaseManager::instance();
+    if (!dbManager->initialize()) {
+        qCritical() << "Failed to initialize database manager";
+        return false;
+    }
 
     // 初始化密码管理器
     if (!m_passwordManager->initialize()) {

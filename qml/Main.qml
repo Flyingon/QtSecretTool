@@ -16,6 +16,57 @@ ApplicationWindow {
 
     property bool isLoading: App.passwordManager.isLoading
 
+    // 密码管理器
+    PasswordManager {
+        id: passwordManager
+        onMasterPasswordSet: {
+            console.log("Master password set successfully")
+            // 可以在这里添加成功提示
+        }
+        onMasterPasswordVerified: {
+            console.log("Master password verified successfully")
+            // 验证成功后可以继续应用启动
+        }
+        onMasterPasswordChanged: {
+            console.log("Master password changed successfully")
+            // 可以在这里添加成功提示
+        }
+        onPasswordError: function(error) {
+            console.log("Password error:", error)
+            // 可以在这里添加错误提示
+        }
+    }
+    
+    // 启动时的主密码验证对话框
+    MasterPasswordDialog {
+        id: startupPasswordDialog
+        visible: false
+        onPasswordSet: {
+            console.log("Startup password set")
+            // 密码设置成功，可以继续
+        }
+        onPasswordChanged: {
+            console.log("Startup password changed")
+        }
+    }
+    
+    // 启动时检查主密码
+    Component.onCompleted: {
+        if (passwordManager.hasMasterPassword()) {
+            // 如果已设置主密码，需要验证
+            startupPasswordDialog.isFirstTime = false
+            startupPasswordDialog.isChangingPassword = false
+            startupPasswordDialog.reset()
+            startupPasswordDialog.open()
+        } else {
+            // 如果未设置主密码，需要设置
+            startupPasswordDialog.isFirstTime = true
+            startupPasswordDialog.isChangingPassword = false
+            startupPasswordDialog.reset()
+            startupPasswordDialog.open()
+        }
+    }
+
     // 主要布局
     RowLayout {
         anchors.fill: parent

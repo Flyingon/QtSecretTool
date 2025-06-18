@@ -4,7 +4,7 @@
 #include <QIcon>
 #include <QtQml>
 #include "src/core/Application.h"
-#include "src/core/PasswordManager.h"
+#include "src/PasswordManager.h"
 #include "src/models/PasswordItem.h"
 #include "src/models/PasswordListModel.h"
 

@@ -8,6 +8,7 @@
 #include <QString>
 #include <QList>
 #include "models/PasswordItem.h"
+#include "crypto/CryptoManager.h"
 
 /**
  * @brief 数据库管理类

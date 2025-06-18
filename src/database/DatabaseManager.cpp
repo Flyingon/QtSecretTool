@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QDateTime>
 #include <QVariant>
+#include "../crypto/CryptoManager.h"
 
 // 静态成员初始化
 DatabaseManager* DatabaseManager::s_instance = nullptr;
@@ -137,17 +138,30 @@ int DatabaseManager::savePasswordItem(PasswordItem *item)
         return -1;
     }
 
+    // 获取加密管理器实例
+    CryptoManager *crypto = CryptoManager::instance();
+    if (!crypto->isInitialized()) {
+        qCritical() << "CryptoManager not initialized";
+        emit databaseError("Encryption not initialized");
+        return -1;
+    }
+
     QSqlQuery query(m_database);
     query.prepare(R"(
         INSERT INTO passwords (title, username, password, website, notes, category, created_at, updated_at, is_favorite)
         VALUES (:title, :username, :password, :website, :notes, :category, :created_at, :updated_at, :is_favorite)
     )");
 
+    // 加密敏感字段
+    QString encryptedPassword = crypto->encryptString(item->password());
+    QString encryptedUsername = crypto->encryptString(item->username());
+    QString encryptedNotes = crypto->encryptString(item->notes());
+
     query.bindValue(":title", item->title());
-    query.bindValue(":username", item->username());
-    query.bindValue(":password", item->password());
+    query.bindValue(":username", encryptedUsername);
+    query.bindValue(":password", encryptedPassword);
     query.bindValue(":website", item->website());
-    query.bindValue(":notes", item->notes());
+    query.bindValue(":notes", encryptedNotes);
     query.bindValue(":category", item->category());
     query.bindValue(":created_at", item->createdAt());
     query.bindValue(":updated_at", item->updatedAt());
@@ -179,6 +193,14 @@ bool DatabaseManager::updatePasswordItem(PasswordItem *item)
         return false;
     }
 
+    // 获取加密管理器实例
+    CryptoManager *crypto = CryptoManager::instance();
+    if (!crypto->isInitialized()) {
+        qCritical() << "CryptoManager not initialized";
+        emit databaseError("Encryption not initialized");
+        return false;
+    }
+
     QSqlQuery query(m_database);
     query.prepare(R"(
         UPDATE passwords 
@@ -188,11 +210,16 @@ bool DatabaseManager::updatePasswordItem(PasswordItem *item)
         WHERE id = :id
     )");
 
+    // 加密敏感字段
+    QString encryptedPassword = crypto->encryptString(item->password());
+    QString encryptedUsername = crypto->encryptString(item->username());
+    QString encryptedNotes = crypto->encryptString(item->notes());
+
     query.bindValue(":title", item->title());
-    query.bindValue(":username", item->username());
-    query.bindValue(":password", item->password());
+    query.bindValue(":username", encryptedUsername);
+    query.bindValue(":password", encryptedPassword);
     query.bindValue(":website", item->website());
-    query.bindValue(":notes", item->notes());
+    query.bindValue(":notes", encryptedNotes);
     query.bindValue(":category", item->category());
     query.bindValue(":updated_at", QDateTime::currentDateTime());
     query.bindValue(":is_favorite", item->isFavorite());
@@ -794,14 +821,31 @@ bool DatabaseManager::setDatabaseVersion(int version)
  */
 PasswordItem* DatabaseManager::createPasswordItemFromQuery(const QSqlQuery &query)
 {
+    // 获取加密管理器实例
+    CryptoManager *crypto = CryptoManager::instance();
+    if (!crypto->isInitialized()) {
+        qCritical() << "CryptoManager not initialized";
+        return nullptr;
+    }
+
     PasswordItem *item = new PasswordItem();
     
     item->setId(query.value("id").toInt());
     item->setTitle(query.value("title").toString());
-    item->setUsername(query.value("username").toString());
-    item->setPassword(query.value("password").toString());
+    
+    // 解密敏感字段
+    QString encryptedUsername = query.value("username").toString();
+    QString encryptedPassword = query.value("password").toString();
+    QString encryptedNotes = query.value("notes").toString();
+    
+    QString decryptedUsername = crypto->decryptString(encryptedUsername);
+    QString decryptedPassword = crypto->decryptString(encryptedPassword);
+    QString decryptedNotes = crypto->decryptString(encryptedNotes);
+    
+    item->setUsername(decryptedUsername);
+    item->setPassword(decryptedPassword);
     item->setWebsite(query.value("website").toString());
-    item->setNotes(query.value("notes").toString());
+    item->setNotes(decryptedNotes);
     item->setCategory(query.value("category").toString());
     item->setCreatedAt(query.value("created_at").toDateTime());
     item->setUpdatedAt(query.value("updated_at").toDateTime());

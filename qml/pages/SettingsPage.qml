@@ -10,6 +10,37 @@ Rectangle {
     
     property bool hasUnsavedChanges: false
     
+    // 密码管理器
+    PasswordManager {
+        id: passwordManager
+        onMasterPasswordSet: {
+            console.log("Master password set successfully")
+            // 可以在这里添加成功提示
+        }
+        onMasterPasswordVerified: {
+            console.log("Master password verified successfully")
+        }
+        onMasterPasswordChanged: {
+            console.log("Master password changed successfully")
+            // 可以在这里添加成功提示
+        }
+        onPasswordError: function(error) {
+            console.log("Password error:", error)
+            // 可以在这里添加错误提示
+        }
+    }
+    
+    // 主密码对话框
+    MasterPasswordDialog {
+        id: masterPasswordDialog
+        onPasswordSet: {
+            console.log("Password set from dialog")
+        }
+        onPasswordChanged: {
+            console.log("Password changed from dialog")
+        }
+    }
+    
     ScrollView {
         anchors.fill: parent
         anchors.margins: 20
@@ -46,10 +77,12 @@ Rectangle {
                         }
                         
                         Button {
-                            text: qsTr("更改主密码")
+                            text: passwordManager.hasMasterPassword() ? qsTr("更改主密码") : qsTr("设置主密码")
                             onClicked: {
-                                // TODO: 打开更改主密码对话框
-                                console.log("Change master password")
+                                masterPasswordDialog.isFirstTime = !passwordManager.hasMasterPassword()
+                                masterPasswordDialog.isChangingPassword = passwordManager.hasMasterPassword()
+                                masterPasswordDialog.reset()
+                                masterPasswordDialog.open()
                             }
                         }
                         

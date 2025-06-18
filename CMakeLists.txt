@@ -20,19 +20,21 @@ qt_standard_project_setup(REQUIRES 6.8)
 set(SOURCES
     main.cpp
     src/core/Application.cpp
-    src/core/PasswordManager.cpp
+    src/PasswordManager.cpp
     src/models/PasswordItem.cpp
     src/models/PasswordListModel.cpp
     src/database/DatabaseManager.cpp
+    src/crypto/CryptoManager.cpp
 )
 
 # 头文件列表
 set(HEADERS
     src/core/Application.h
-    src/core/PasswordManager.h
+    src/PasswordManager.h
     src/models/PasswordItem.h
     src/models/PasswordListModel.h
     src/database/DatabaseManager.h
+    src/crypto/CryptoManager.h
 )
 
 qt_add_executable(appQtSecretTool
@@ -52,6 +54,7 @@ qt_add_qml_module(appQtSecretTool
         qml/components/SearchBar.qml
         qml/components/CustomButton.qml
         qml/components/PasswordGeneratorDialog.qml
+        qml/components/MasterPasswordDialog.qml
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
