@@ -43,10 +43,16 @@ ApplicationWindow {
         visible: false
         onPasswordSet: {
             console.log("Startup password set")
-            // 密码设置成功，可以继续
+            // 密码设置成功，刷新密码列表
+            App.passwordManager.refreshPasswordList()
         }
         onPasswordChanged: {
             console.log("Startup password changed")
+        }
+        onPasswordVerified: {
+            console.log("Startup password verified")
+            // 密码验证成功，刷新密码列表
+            App.passwordManager.refreshPasswordList()
         }
     }
     

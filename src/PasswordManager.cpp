@@ -166,8 +166,12 @@ bool PasswordManager::initialize()
         return true;
     }
     
-    // 刷新密码列表
-    refreshPasswordList();
+    // 只有在加密管理器已初始化时才刷新密码列表
+    if (m_cryptoManager->isInitialized()) {
+        refreshPasswordList();
+    } else {
+        qInfo() << "CryptoManager not initialized, password list will be loaded after master password verification";
+    }
     
     qInfo() << "PasswordManager initialized successfully";
     return true;

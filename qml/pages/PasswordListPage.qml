@@ -102,21 +102,21 @@ Rectangle {
                 passwordItem: model.passwordItem
                 
                 onClicked: {
-                    passwordListPage.openPasswordDetails(passwordItem)
+                    passwordListPage.openPasswordDetails(model.passwordItem)
                 }
                 
                 onEditRequested: {
-                    passwordListPage.editPasswordRequested(passwordItem)
+                    passwordListPage.editPasswordRequested(model.passwordItem)
                 }
                 
                 onDeleteRequested: {
-                    deleteConfirmDialog.passwordToDelete = passwordItem
+                    deleteConfirmDialog.passwordToDelete = model.passwordItem
                     deleteConfirmDialog.open()
                 }
                 
                 onFavoriteToggled: {
-                    passwordItem.isFavorite = !passwordItem.isFavorite
-                    App.passwordManager.updatePassword(passwordItem)
+                    model.passwordItem.isFavorite = !model.passwordItem.isFavorite
+                    App.passwordManager.updatePassword(model.passwordItem)
                 }
             }
             

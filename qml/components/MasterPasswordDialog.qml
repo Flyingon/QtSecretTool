@@ -17,6 +17,7 @@ Dialog {
     
     signal passwordSet()
     signal passwordChanged()
+    signal passwordVerified()
     
     // 密码管理器
     PasswordManager {
@@ -29,6 +30,7 @@ Dialog {
         onMasterPasswordVerified: {
             console.log("Master password verified successfully")
             masterPasswordDialog.accept()
+            passwordVerified()
         }
         onMasterPasswordChanged: {
             console.log("Master password changed successfully")
