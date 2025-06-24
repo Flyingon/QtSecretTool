@@ -5,6 +5,10 @@ project(QtSecretTool VERSION 0.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# SQLCipher配置
+set(SQLCIPHER_INCLUDE_DIR "/opt/homebrew/Cellar/sqlcipher/4.6.1/include/sqlcipher")
+set(SQLCIPHER_LIB_DIR "/opt/homebrew/Cellar/sqlcipher/4.6.1/lib")
+
 # 查找所需的Qt组件
 find_package(Qt6 REQUIRED COMPONENTS 
     Core 
@@ -68,6 +72,15 @@ set_target_properties(appQtSecretTool PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
+# 设置包含目录
+target_include_directories(appQtSecretTool PRIVATE 
+    src
+    ${SQLCIPHER_INCLUDE_DIR}
+)
+
+# 设置库目录
+target_link_directories(appQtSecretTool PRIVATE ${SQLCIPHER_LIB_DIR})
+
 target_link_libraries(appQtSecretTool
     PRIVATE 
     Qt6::Core
@@ -75,10 +88,8 @@ target_link_libraries(appQtSecretTool
     Qt6::Sql
     Qt6::Widgets
     Qt6::Concurrent
+    sqlcipher
 )
-
-# 设置包含目录
-target_include_directories(appQtSecretTool PRIVATE src)
 
 include(GNUInstallDirs)
 install(TARGETS appQtSecretTool

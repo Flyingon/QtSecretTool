@@ -35,6 +35,34 @@ public:
     bool initialize(const QString &databasePath = QString());
 
     /**
+     * @brief 设置数据库密码（SQLCipher）
+     * @param password 主密码
+     * @return 设置是否成功
+     */
+    bool setDatabasePassword(const QString &password);
+
+    /**
+     * @brief 验证数据库密码（SQLCipher）
+     * @param password 主密码
+     * @return 验证是否成功
+     */
+    bool verifyDatabasePassword(const QString &password);
+
+    /**
+     * @brief 更改数据库密码（SQLCipher）
+     * @param oldPassword 旧密码
+     * @param newPassword 新密码
+     * @return 更改是否成功
+     */
+    bool changeDatabasePassword(const QString &oldPassword, const QString &newPassword);
+
+    /**
+     * @brief 检查数据库是否已加密
+     * @return 如果数据库已加密则返回true
+     */
+    bool isDatabaseEncrypted() const;
+
+    /**
      * @brief 关闭数据库连接
      */
     void closeDatabase();
@@ -191,6 +219,8 @@ private:
 
     QSqlDatabase m_database;             // 数据库连接
     QString m_databasePath;              // 数据库文件路径
+    bool m_isEncrypted;                  // 数据库是否已加密
+    QString m_currentPassword;           // 当前数据库密码
 
     /**
      * @brief 创建数据库表结构

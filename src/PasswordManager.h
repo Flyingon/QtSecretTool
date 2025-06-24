@@ -78,6 +78,34 @@ public:
     Q_INVOKABLE bool isCryptoInitialized() const;
 
     /**
+     * @brief 设置数据库密码（SQLCipher）
+     * @param password 主密码
+     * @return 设置是否成功
+     */
+    Q_INVOKABLE bool setDatabasePassword(const QString &password);
+
+    /**
+     * @brief 验证数据库密码（SQLCipher）
+     * @param password 主密码
+     * @return 验证是否成功
+     */
+    Q_INVOKABLE bool verifyDatabasePassword(const QString &password);
+
+    /**
+     * @brief 更改数据库密码（SQLCipher）
+     * @param oldPassword 旧密码
+     * @param newPassword 新密码
+     * @return 更改是否成功
+     */
+    Q_INVOKABLE bool changeDatabasePassword(const QString &oldPassword, const QString &newPassword);
+
+    /**
+     * @brief 检查数据库是否已加密
+     * @return 如果数据库已加密则返回true
+     */
+    Q_INVOKABLE bool isDatabaseEncrypted() const;
+
+    /**
      * @brief 初始化密码管理器
      * @return 初始化是否成功
      */

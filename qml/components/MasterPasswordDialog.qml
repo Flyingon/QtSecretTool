@@ -46,13 +46,13 @@ Dialog {
     onOpened: {
         if (isFirstTime) {
             title = qsTr("设置主密码")
-            subtitleText.text = qsTr("请设置一个主密码来保护您的密码数据")
+            subtitleText.text = qsTr("请设置一个主密码来保护您的密码数据\n数据库将使用SQLCipher进行加密")
         } else if (isChangingPassword) {
             title = qsTr("更改主密码")
-            subtitleText.text = qsTr("请输入旧密码和新密码")
+            subtitleText.text = qsTr("请输入旧密码和新密码\n数据库密码将同时更新")
         } else {
             title = qsTr("验证主密码")
-            subtitleText.text = qsTr("请输入主密码以继续")
+            subtitleText.text = qsTr("请输入主密码以继续\n数据库已使用SQLCipher加密")
         }
     }
     

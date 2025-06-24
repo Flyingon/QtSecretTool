@@ -33,6 +33,7 @@ DatabaseManager* DatabaseManager::instance()
  */
 DatabaseManager::DatabaseManager(QObject *parent)
     : QObject(parent)
+    , m_isEncrypted(false)
 {
     // 在构造函数中不进行数据库初始化，等待调用initialize()
 }
@@ -71,16 +72,34 @@ bool DatabaseManager::initialize(const QString &databasePath)
         }
     }
 
-    // 创建数据库连接
+    // 创建数据库连接 - 使用SQLCipher
     m_database = QSqlDatabase::addDatabase("QSQLITE");
     m_database.setDatabaseName(m_databasePath);
 
+    // 检查数据库文件是否存在
+    bool databaseExists = QFile::exists(m_databasePath);
+    
     // 打开数据库
     if (!m_database.open()) {
         QString error = QString("Failed to open database: %1").arg(m_database.lastError().text());
         qCritical() << error;
         emit databaseError(error);
         return false;
+    }
+
+    // 如果是新数据库，设置加密
+    if (!databaseExists) {
+        qInfo() << "New database created, encryption will be set when password is provided";
+    } else {
+        // 检查现有数据库是否已加密
+        QSqlQuery query(m_database);
+        if (query.exec("PRAGMA cipher_version")) {
+            m_isEncrypted = true;
+            qInfo() << "Database is encrypted with SQLCipher";
+        } else {
+            m_isEncrypted = false;
+            qInfo() << "Database is not encrypted";
+        }
     }
 
     qInfo() << "Database opened successfully:" << m_databasePath;
@@ -878,4 +897,117 @@ QString DatabaseManager::getDefaultDatabasePath() const
         dir.mkpath(dataPath);
     }
     return dir.filePath("passwords.db");
+}
+
+/**
+ * @brief 设置数据库密码（SQLCipher）
+ * @param password 主密码
+ * @return 设置是否成功
+ */
+bool DatabaseManager::setDatabasePassword(const QString &password)
+{
+    if (!isConnected() || password.isEmpty()) {
+        return false;
+    }
+
+    QSqlQuery query(m_database);
+    
+    // 设置数据库密码
+    query.prepare("PRAGMA key = ?");
+    query.addBindValue(password);
+    
+    if (!query.exec()) {
+        logDatabaseError("Set database password", query.lastError());
+        return false;
+    }
+
+    // 验证密码是否正确
+    if (!query.exec("SELECT count(*) FROM sqlite_master")) {
+        logDatabaseError("Verify database password", query.lastError());
+        return false;
+    }
+
+    m_currentPassword = password;
+    m_isEncrypted = true;
+    
+    qInfo() << "Database password set successfully";
+    return true;
+}
+
+/**
+ * @brief 验证数据库密码（SQLCipher）
+ * @param password 主密码
+ * @return 验证是否成功
+ */
+bool DatabaseManager::verifyDatabasePassword(const QString &password)
+{
+    if (!isConnected() || password.isEmpty()) {
+        return false;
+    }
+
+    QSqlQuery query(m_database);
+    
+    // 设置数据库密码
+    query.prepare("PRAGMA key = ?");
+    query.addBindValue(password);
+    
+    if (!query.exec()) {
+        logDatabaseError("Set database password for verification", query.lastError());
+        return false;
+    }
+
+    // 验证密码是否正确
+    if (!query.exec("SELECT count(*) FROM sqlite_master")) {
+        logDatabaseError("Verify database password", query.lastError());
+        return false;
+    }
+
+    m_currentPassword = password;
+    m_isEncrypted = true;
+    
+    qInfo() << "Database password verified successfully";
+    return true;
+}
+
+/**
+ * @brief 更改数据库密码（SQLCipher）
+ * @param oldPassword 旧密码
+ * @param newPassword 新密码
+ * @return 更改是否成功
+ */
+bool DatabaseManager::changeDatabasePassword(const QString &oldPassword, const QString &newPassword)
+{
+    if (!isConnected() || oldPassword.isEmpty() || newPassword.isEmpty()) {
+        return false;
+    }
+
+    // 首先验证旧密码
+    if (!verifyDatabasePassword(oldPassword)) {
+        return false;
+    }
+
+    QSqlQuery query(m_database);
+    
+    // 更改数据库密码
+    query.prepare("PRAGMA rekey = ?");
+    query.addBindValue(newPassword);
+    
+    if (!query.exec()) {
+        logDatabaseError("Change database password", query.lastError());
+        return false;
+    }
+
+    m_currentPassword = newPassword;
+    
+    qInfo() << "Database password changed successfully";
+    return true;
+}
+
+/**
+ * @brief 检查数据库是否已加密
+ * @return 如果数据库已加密则返回true
+ */
+bool DatabaseManager::isDatabaseEncrypted() const
+{
+    return m_isEncrypted;
 } 

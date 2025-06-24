@@ -63,6 +63,12 @@ bool PasswordManager::setMasterPassword(const QString &password)
         return false;
     }
 
+    // 设置数据库密码（SQLCipher）
+    if (!m_databaseManager->setDatabasePassword(password)) {
+        setLastError("设置数据库密码失败");
+        return false;
+    }
+
     // 保存设置
     QSettings settings;
     settings.setValue("master_password_set", "true");
@@ -84,8 +90,9 @@ bool PasswordManager::verifyMasterPassword(const QString &password)
         return false;
     }
 
-    if (!m_cryptoManager->verifyMasterPassword(password)) {
-        setLastError("主密码不正确");
+    // 验证数据库密码（SQLCipher）
+    if (!m_databaseManager->verifyDatabasePassword(password)) {
+        setLastError("数据库密码验证失败");
         return false;
     }
 
@@ -113,8 +120,15 @@ bool PasswordManager::changeMasterPassword(const QString &oldPassword, const QSt
         return false;
     }
 
+    // 更改数据库密码（SQLCipher）
+    if (!m_databaseManager->changeDatabasePassword(oldPassword, newPassword)) {
+        setLastError("更改数据库密码失败");
+        return false;
+    }
+
+    // 更改加密管理器密码
     if (!m_cryptoManager->changeMasterPassword(oldPassword, newPassword)) {
-        setLastError("更改主密码失败");
+        setLastError("更改加密管理器密码失败");
         return false;
     }
 
@@ -150,6 +164,79 @@ bool PasswordManager::initializeCrypto(const QString &password)
 bool PasswordManager::isCryptoInitialized() const
 {
     return m_cryptoManager->isInitialized();
+}
+
+/**
+ * @brief 设置数据库密码（SQLCipher）
+ * @param password 主密码
+ * @return 设置是否成功
+ */
+bool PasswordManager::setDatabasePassword(const QString &password)
+{
+    if (password.isEmpty()) {
+        setLastError("数据库密码不能为空");
+        return false;
+    }
+
+    if (!m_databaseManager->setDatabasePassword(password)) {
+        setLastError("设置数据库密码失败");
+        return false;
+    }
+
+    qInfo() << "Database password set successfully";
+    return true;
+}
+
+/**
+ * @brief 验证数据库密码（SQLCipher）
+ * @param password 主密码
+ * @return 验证是否成功
+ */
+bool PasswordManager::verifyDatabasePassword(const QString &password)
+{
+    if (password.isEmpty()) {
+        setLastError("数据库密码不能为空");
+        return false;
+    }
+
+    if (!m_databaseManager->verifyDatabasePassword(password)) {
+        setLastError("数据库密码验证失败");
+        return false;
+    }
+
+    qInfo() << "Database password verified successfully";
+    return true;
+}
+
+/**
+ * @brief 更改数据库密码（SQLCipher）
+ * @param oldPassword 旧密码
+ * @param newPassword 新密码
+ * @return 更改是否成功
+ */
+bool PasswordManager::changeDatabasePassword(const QString &oldPassword, const QString &newPassword)
+{
+    if (oldPassword.isEmpty() || newPassword.isEmpty()) {
+        setLastError("密码不能为空");
+        return false;
+    }
+
+    if (!m_databaseManager->changeDatabasePassword(oldPassword, newPassword)) {
+        setLastError("更改数据库密码失败");
+        return false;
+    }
+
+    qInfo() << "Database password changed successfully";
+    return true;
+}
+
+/**
+ * @brief 检查数据库是否已加密
+ * @return 如果数据库已加密则返回true
+ */
+bool PasswordManager::isDatabaseEncrypted() const
+{
+    return m_databaseManager->isDatabaseEncrypted();
 }
 
 /**
