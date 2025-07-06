@@ -14,8 +14,8 @@ Rectangle {
     signal editPasswordRequested(var passwordItem)
     
     function openPasswordDetails(passwordItem) {
-        // TODO: 打开密码详情页面
-        console.log("Opening password details for:", passwordItem.title)
+        // 直接打开编辑页面
+        editPasswordRequested(passwordItem)
     }
     
     ColumnLayout {
