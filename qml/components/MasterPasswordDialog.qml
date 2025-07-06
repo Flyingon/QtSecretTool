@@ -12,6 +12,10 @@ Dialog {
     height: 300
     anchors.centerIn: parent
     
+    // 关键属性：防止意外关闭
+    closePolicy: Dialog.NoAutoClose
+    standardButtons: Dialog.NoStandardButtons
+    
     property bool isFirstTime: false
     property bool isChangingPassword: false
     
@@ -54,6 +58,18 @@ Dialog {
             title = qsTr("验证主密码")
             subtitleText.text = qsTr("请输入主密码以继续\n数据库已使用SQLCipher加密")
         }
+    }
+    
+    // 防止ESC键关闭对话框
+    onRejected: {
+        // 如果是验证密码模式，不允许关闭
+        if (!isFirstTime && !isChangingPassword) {
+            // 重新打开对话框，强制用户输入密码
+            masterPasswordDialog.open()
+            return
+        }
+        // 只有在设置密码或更改密码时才允许取消
+        masterPasswordDialog.close()
     }
     
     background: Rectangle {
@@ -127,8 +143,9 @@ Dialog {
             }
         }
         
-        // 确认密码输入
+        // 确认密码输入（验证密码时不显示）
         ColumnLayout {
+            visible: isFirstTime || isChangingPassword
             Layout.fillWidth: true
             spacing: 8
             
@@ -151,8 +168,9 @@ Dialog {
             }
         }
         
-        // 密码强度指示器
+        // 密码强度指示器（验证密码时不显示）
         Rectangle {
+            visible: isFirstTime || isChangingPassword
             Layout.fillWidth: true
             height: 4
             radius: 2
@@ -167,6 +185,7 @@ Dialog {
         }
         
         Text {
+            visible: isFirstTime || isChangingPassword
             text: passwordStrengthText
             color: passwordStrengthColor
             font.pointSize: 10
@@ -178,7 +197,9 @@ Dialog {
             Layout.alignment: Qt.AlignRight
             spacing: 10
             
+            // 只在设置密码或更改密码时显示取消按钮
             Button {
+                visible: isFirstTime || isChangingPassword
                 text: qsTr("取消")
                 onClicked: masterPasswordDialog.reject()
                 background: Rectangle {
@@ -242,10 +263,13 @@ Dialog {
                    newPasswordField.text.length > 0 && 
                    confirmPasswordField.text.length > 0 &&
                    newPasswordField.text === confirmPasswordField.text
-        } else {
+        } else if (isFirstTime) {
             return newPasswordField.text.length > 0 && 
                    confirmPasswordField.text.length > 0 &&
                    newPasswordField.text === confirmPasswordField.text
+        } else {
+            // 验证密码时只需要密码字段不为空
+            return newPasswordField.text.length > 0
         }
     }
     
