@@ -33,9 +33,14 @@ DatabaseManager* DatabaseManager::instance()
  */
 DatabaseManager::DatabaseManager(QObject *parent)
     : QObject(parent)
+    , m_sqlcipher(new SQLCipherWrapper(this))
     , m_isEncrypted(false)
 {
     // 在构造函数中不进行数据库初始化，等待调用initialize()
+    
+    // 连接SQLCipher错误信号
+    connect(m_sqlcipher, &SQLCipherWrapper::databaseError, 
+            this, &DatabaseManager::databaseError);
 }
 
 /**
@@ -53,76 +58,18 @@ DatabaseManager::~DatabaseManager()
  */
 bool DatabaseManager::initialize(const QString &databasePath)
 {
-    // 如果已经连接，先关闭
-    if (m_database.isOpen()) {
-        closeDatabase();
-    }
-
-    // 确定数据库路径
+    // 只保存路径，不做 openDatabase，不做 createTables
     m_databasePath = databasePath.isEmpty() ? getDefaultDatabasePath() : databasePath;
-    
-    // 确保数据库目录存在
-    QFileInfo fileInfo(m_databasePath);
-    QDir dir = fileInfo.absoluteDir();
-    if (!dir.exists()) {
-        if (!dir.mkpath(dir.absolutePath())) {
-            qCritical() << "Failed to create database directory:" << dir.absolutePath();
-            emit databaseError("Failed to create database directory");
-            return false;
-        }
-    }
-
-    // 创建数据库连接 - 使用SQLCipher
-    m_database = QSqlDatabase::addDatabase("QSQLITE");
-    m_database.setDatabaseName(m_databasePath);
-
-    // 检查数据库文件是否存在
-    bool databaseExists = QFile::exists(m_databasePath);
-    
-    // 打开数据库
-    if (!m_database.open()) {
-        QString error = QString("Failed to open database: %1").arg(m_database.lastError().text());
-        qCritical() << error;
-        emit databaseError(error);
-        return false;
-    }
-
-    // 如果是新数据库，设置加密
-    if (!databaseExists) {
-        qInfo() << "New database created, encryption will be set when password is provided";
-    } else {
-        // 检查现有数据库是否已加密
-        QSqlQuery query(m_database);
-        if (query.exec("PRAGMA cipher_version")) {
-            m_isEncrypted = true;
-            qInfo() << "Database is encrypted with SQLCipher";
-        } else {
-            m_isEncrypted = false;
-            qInfo() << "Database is not encrypted";
-        }
-    }
-
-    qInfo() << "Database opened successfully:" << m_databasePath;
-
-    // 启用外键约束
-    QSqlQuery query(m_database);
-    if (!query.exec("PRAGMA foreign_keys = ON")) {
-        logDatabaseError("Enable foreign keys", query.lastError());
-    }
-
-    // 创建表结构
-    if (!createTables()) {
-        closeDatabase();
-        return false;
-    }
-
-    // 检查并升级数据库
-    if (!upgradeDatabase()) {
-        closeDatabase();
-        return false;
-    }
-
     return true;
+}
+
+bool DatabaseManager::openDatabase(const QString &databasePath)
+{
+    if (m_sqlcipher->isConnected()) {
+        m_sqlcipher->closeDatabase();
+    }
+    m_databasePath = databasePath;
+    return m_sqlcipher->openDatabase(databasePath);
 }
 
 /**
@@ -130,11 +77,14 @@ bool DatabaseManager::initialize(const QString &databasePath)
  */
 void DatabaseManager::closeDatabase()
 {
+    if (m_sqlcipher->isConnected()) {
+        m_sqlcipher->closeDatabase();
+        qInfo() << "SQLCipher database closed";
+    }
     if (m_database.isOpen()) {
         m_database.close();
-        qInfo() << "Database closed";
+        QSqlDatabase::removeDatabase(QSqlDatabase::defaultConnection);
     }
-    QSqlDatabase::removeDatabase(QSqlDatabase::defaultConnection);
 }
 
 /**
@@ -143,7 +93,7 @@ void DatabaseManager::closeDatabase()
  */
 bool DatabaseManager::isConnected() const
 {
-    return m_database.isOpen();
+    return m_sqlcipher->isConnected();
 }
 
 /**
@@ -157,7 +107,6 @@ int DatabaseManager::savePasswordItem(PasswordItem *item)
         return -1;
     }
 
-    // 获取加密管理器实例
     CryptoManager *crypto = CryptoManager::instance();
     if (!crypto->isInitialized()) {
         qCritical() << "CryptoManager not initialized";
@@ -165,39 +114,31 @@ int DatabaseManager::savePasswordItem(PasswordItem *item)
         return -1;
     }
 
-    QSqlQuery query(m_database);
-    query.prepare(R"(
-        INSERT INTO passwords (title, username, password, website, notes, category, created_at, updated_at, is_favorite)
-        VALUES (:title, :username, :password, :website, :notes, :category, :created_at, :updated_at, :is_favorite)
-    )");
-
     // 加密敏感字段
     QString encryptedPassword = crypto->encryptString(item->password());
     QString encryptedUsername = crypto->encryptString(item->username());
     QString encryptedNotes = crypto->encryptString(item->notes());
 
-    query.bindValue(":title", item->title());
-    query.bindValue(":username", encryptedUsername);
-    query.bindValue(":password", encryptedPassword);
-    query.bindValue(":website", item->website());
-    query.bindValue(":notes", encryptedNotes);
-    query.bindValue(":category", item->category());
-    query.bindValue(":created_at", item->createdAt());
-    query.bindValue(":updated_at", item->updatedAt());
-    query.bindValue(":is_favorite", item->isFavorite());
-
-    if (!query.exec()) {
-        logDatabaseError("Save password item", query.lastError());
+    QString sql = QString(R"(
+        INSERT INTO passwords (title, username, password, website, notes, category, created_at, updated_at, is_favorite)
+        VALUES ('%1', '%2', '%3', '%4', '%5', '%6', '%7', '%8', %9)
+    )")
+        .arg(item->title().replace("'", "''"))
+        .arg(encryptedUsername.replace("'", "''"))
+        .arg(encryptedPassword.replace("'", "''"))
+        .arg(item->website().replace("'", "''"))
+        .arg(encryptedNotes.replace("'", "''"))
+        .arg(item->category().replace("'", "''"))
+        .arg(item->createdAt().toString(Qt::ISODate))
+        .arg(item->updatedAt().toString(Qt::ISODate))
+        .arg(item->isFavorite() ? 1 : 0);
+    if (!m_sqlcipher->execute(sql)) {
+        emit databaseError(m_sqlcipher->lastError());
         return -1;
     }
-
-    // 获取新插入的ID
-    int newId = query.lastInsertId().toInt();
+    int newId = m_sqlcipher->lastInsertId();
     item->setId(newId);
-
-    qDebug() << "Password item saved with ID:" << newId;
     emit passwordItemSaved(item);
-    
     return newId;
 }
 
@@ -211,50 +152,33 @@ bool DatabaseManager::updatePasswordItem(PasswordItem *item)
     if (!item || !isConnected() || item->id() <= 0) {
         return false;
     }
-
-    // 获取加密管理器实例
     CryptoManager *crypto = CryptoManager::instance();
     if (!crypto->isInitialized()) {
         qCritical() << "CryptoManager not initialized";
         emit databaseError("Encryption not initialized");
         return false;
     }
-
-    QSqlQuery query(m_database);
-    query.prepare(R"(
-        UPDATE passwords 
-        SET title = :title, username = :username, password = :password, 
-            website = :website, notes = :notes, category = :category, 
-            updated_at = :updated_at, is_favorite = :is_favorite
-        WHERE id = :id
-    )");
-
-    // 加密敏感字段
     QString encryptedPassword = crypto->encryptString(item->password());
     QString encryptedUsername = crypto->encryptString(item->username());
     QString encryptedNotes = crypto->encryptString(item->notes());
-
-    query.bindValue(":title", item->title());
-    query.bindValue(":username", encryptedUsername);
-    query.bindValue(":password", encryptedPassword);
-    query.bindValue(":website", item->website());
-    query.bindValue(":notes", encryptedNotes);
-    query.bindValue(":category", item->category());
-    query.bindValue(":updated_at", QDateTime::currentDateTime());
-    query.bindValue(":is_favorite", item->isFavorite());
-    query.bindValue(":id", item->id());
-
-    if (!query.exec()) {
-        logDatabaseError("Update password item", query.lastError());
+    QString sql = QString(R"(
+        UPDATE passwords SET title='%1', username='%2', password='%3', website='%4', notes='%5', category='%6', updated_at='%7', is_favorite=%8 WHERE id=%9
+    )")
+        .arg(item->title().replace("'", "''"))
+        .arg(encryptedUsername.replace("'", "''"))
+        .arg(encryptedPassword.replace("'", "''"))
+        .arg(item->website().replace("'", "''"))
+        .arg(encryptedNotes.replace("'", "''"))
+        .arg(item->category().replace("'", "''"))
+        .arg(QDateTime::currentDateTime().toString(Qt::ISODate))
+        .arg(item->isFavorite() ? 1 : 0)
+        .arg(item->id());
+    if (!m_sqlcipher->execute(sql)) {
+        emit databaseError(m_sqlcipher->lastError());
         return false;
     }
-
-    // 更新项目的时间戳
     item->setUpdatedAt(QDateTime::currentDateTime());
-
-    qDebug() << "Password item updated, ID:" << item->id();
     emit passwordItemUpdated(item);
-    
     return true;
 }
 
@@ -268,24 +192,13 @@ bool DatabaseManager::deletePasswordItem(int id)
     if (!isConnected() || id <= 0) {
         return false;
     }
-
-    QSqlQuery query(m_database);
-    query.prepare("DELETE FROM passwords WHERE id = :id");
-    query.bindValue(":id", id);
-
-    if (!query.exec()) {
-        logDatabaseError("Delete password item", query.lastError());
+    QString sql = QString("DELETE FROM passwords WHERE id=%1").arg(id);
+    if (!m_sqlcipher->execute(sql)) {
+        emit databaseError(m_sqlcipher->lastError());
         return false;
     }
-
-    int affectedRows = query.numRowsAffected();
-    if (affectedRows > 0) {
-        qDebug() << "Password item deleted, ID:" << id;
-        emit passwordItemDeleted(id);
-        return true;
-    }
-
-    return false;
+    emit passwordItemDeleted(id);
+    return true;
 }
 
 /**
@@ -298,20 +211,11 @@ PasswordItem* DatabaseManager::getPasswordItem(int id)
     if (!isConnected() || id <= 0) {
         return nullptr;
     }
-
-    QSqlQuery query(m_database);
-    query.prepare("SELECT * FROM passwords WHERE id = :id");
-    query.bindValue(":id", id);
-
-    if (!query.exec()) {
-        logDatabaseError("Get password item", query.lastError());
-        return nullptr;
+    QString sql = QString("SELECT * FROM passwords WHERE id=%1").arg(id);
+    QList<QVariantMap> results = m_sqlcipher->query(sql);
+    if (!results.isEmpty()) {
+        return createPasswordItemFromMap(results.first());
     }
-
-    if (query.next()) {
-        return createPasswordItemFromQuery(query);
-    }
-
     return nullptr;
 }
 
@@ -322,27 +226,14 @@ PasswordItem* DatabaseManager::getPasswordItem(int id)
 QList<PasswordItem*> DatabaseManager::getAllPasswordItems()
 {
     QList<PasswordItem*> items;
-    
     if (!isConnected()) {
         return items;
     }
-
-    QSqlQuery query(m_database);
-    query.prepare("SELECT * FROM passwords ORDER BY updated_at DESC");
-
-    if (!query.exec()) {
-        logDatabaseError("Get all password items", query.lastError());
-        return items;
+    QList<QVariantMap> results = m_sqlcipher->query("SELECT * FROM passwords ORDER BY updated_at DESC");
+    for (const QVariantMap &row : results) {
+        PasswordItem *item = createPasswordItemFromMap(row);
+        if (item) items.append(item);
     }
-
-    while (query.next()) {
-        PasswordItem *item = createPasswordItemFromQuery(query);
-        if (item) {
-            items.append(item);
-        }
-    }
-
-    qDebug() << "Retrieved" << items.size() << "password items from database";
     return items;
 }
 
@@ -354,35 +245,17 @@ QList<PasswordItem*> DatabaseManager::getAllPasswordItems()
 QList<PasswordItem*> DatabaseManager::searchPasswordItems(const QString &searchTerm)
 {
     QList<PasswordItem*> items;
-    
     if (!isConnected() || searchTerm.isEmpty()) {
         return items;
     }
-
-    QSqlQuery query(m_database);
-    query.prepare(R"(
-        SELECT * FROM passwords 
-        WHERE title LIKE :search OR username LIKE :search OR website LIKE :search 
-              OR notes LIKE :search OR category LIKE :search
-        ORDER BY updated_at DESC
-    )");
-
-    QString searchPattern = QString("%%1%").arg(searchTerm);
-    query.bindValue(":search", searchPattern);
-
-    if (!query.exec()) {
-        logDatabaseError("Search password items", query.lastError());
-        return items;
+    QString escapedSearchTerm = searchTerm;
+    escapedSearchTerm.replace("'", "''");
+    QString sql = QString(R"(SELECT * FROM passwords WHERE title LIKE '%%1%' OR username LIKE '%%1%' OR website LIKE '%%1%' OR notes LIKE '%%1%' OR category LIKE '%%1%' ORDER BY updated_at DESC)").arg(escapedSearchTerm);
+    QList<QVariantMap> results = m_sqlcipher->query(sql);
+    for (const QVariantMap &row : results) {
+        PasswordItem *item = createPasswordItemFromMap(row);
+        if (item) items.append(item);
     }
-
-    while (query.next()) {
-        PasswordItem *item = createPasswordItemFromQuery(query);
-        if (item) {
-            items.append(item);
-        }
-    }
-
-    qDebug() << "Found" << items.size() << "password items matching search term:" << searchTerm;
     return items;
 }
 
@@ -394,27 +267,17 @@ QList<PasswordItem*> DatabaseManager::searchPasswordItems(const QString &searchT
 QList<PasswordItem*> DatabaseManager::getPasswordItemsByCategory(const QString &category)
 {
     QList<PasswordItem*> items;
-    
     if (!isConnected()) {
         return items;
     }
-
-    QSqlQuery query(m_database);
-    query.prepare("SELECT * FROM passwords WHERE category = :category ORDER BY title");
-    query.bindValue(":category", category);
-
-    if (!query.exec()) {
-        logDatabaseError("Get password items by category", query.lastError());
-        return items;
+    QString escapedCategory = category;
+    escapedCategory.replace("'", "''");
+    QString sql = QString("SELECT * FROM passwords WHERE category='%1' ORDER BY title").arg(escapedCategory);
+    QList<QVariantMap> results = m_sqlcipher->query(sql);
+    for (const QVariantMap &row : results) {
+        PasswordItem *item = createPasswordItemFromMap(row);
+        if (item) items.append(item);
     }
-
-    while (query.next()) {
-        PasswordItem *item = createPasswordItemFromQuery(query);
-        if (item) {
-            items.append(item);
-        }
-    }
-
     return items;
 }
 
@@ -425,26 +288,14 @@ QList<PasswordItem*> DatabaseManager::getPasswordItemsByCategory(const QString &
 QList<PasswordItem*> DatabaseManager::getFavoritePasswordItems()
 {
     QList<PasswordItem*> items;
-    
     if (!isConnected()) {
         return items;
     }
-
-    QSqlQuery query(m_database);
-    query.prepare("SELECT * FROM passwords WHERE is_favorite = 1 ORDER BY title");
-
-    if (!query.exec()) {
-        logDatabaseError("Get favorite password items", query.lastError());
-        return items;
+    QList<QVariantMap> results = m_sqlcipher->query("SELECT * FROM passwords WHERE is_favorite = 1 ORDER BY title");
+    for (const QVariantMap &row : results) {
+        PasswordItem *item = createPasswordItemFromMap(row);
+        if (item) items.append(item);
     }
-
-    while (query.next()) {
-        PasswordItem *item = createPasswordItemFromQuery(query);
-        if (item) {
-            items.append(item);
-        }
-    }
-
     return items;
 }
 
@@ -457,14 +308,10 @@ bool DatabaseManager::clearAllPasswords()
     if (!isConnected()) {
         return false;
     }
-
-    QSqlQuery query(m_database);
-    if (!query.exec("DELETE FROM passwords")) {
-        logDatabaseError("Clear all passwords", query.lastError());
+    if (!m_sqlcipher->execute("DELETE FROM passwords")) {
+        emit databaseError(m_sqlcipher->lastError());
         return false;
     }
-
-    qInfo() << "All passwords cleared from database";
     return true;
 }
 
@@ -475,39 +322,18 @@ bool DatabaseManager::clearAllPasswords()
 QVariantMap DatabaseManager::getDatabaseStats()
 {
     QVariantMap stats;
-    
     if (!isConnected()) {
         return stats;
     }
-
-    QSqlQuery query(m_database);
-    
-    // 总密码数量
-    if (query.exec("SELECT COUNT(*) FROM passwords")) {
-        if (query.next()) {
-            stats["totalPasswords"] = query.value(0).toInt();
-        }
-    }
-    
-    // 收藏数量
-    if (query.exec("SELECT COUNT(*) FROM passwords WHERE is_favorite = 1")) {
-        if (query.next()) {
-            stats["favoritePasswords"] = query.value(0).toInt();
-        }
-    }
-    
-    // 分类数量
-    if (query.exec("SELECT COUNT(DISTINCT category) FROM passwords WHERE category IS NOT NULL AND category != ''")) {
-        if (query.next()) {
-            stats["categoriesCount"] = query.value(0).toInt();
-        }
-    }
-    
-    // 数据库文件大小
+    QList<QVariantMap> result = m_sqlcipher->query("SELECT COUNT(*) as totalPasswords FROM passwords");
+    if (!result.isEmpty()) stats["totalPasswords"] = result.first().value("totalPasswords").toInt();
+    result = m_sqlcipher->query("SELECT COUNT(*) as favoritePasswords FROM passwords WHERE is_favorite = 1");
+    if (!result.isEmpty()) stats["favoritePasswords"] = result.first().value("favoritePasswords").toInt();
+    result = m_sqlcipher->query("SELECT COUNT(DISTINCT category) as categoriesCount FROM passwords WHERE category IS NOT NULL AND category != ''");
+    if (!result.isEmpty()) stats["categoriesCount"] = result.first().value("categoriesCount").toInt();
     QFileInfo fileInfo(m_databasePath);
     stats["databaseSize"] = fileInfo.size();
     stats["databasePath"] = m_databasePath;
-    
     return stats;
 }
 
@@ -599,15 +425,7 @@ bool DatabaseManager::compactDatabase()
     if (!isConnected()) {
         return false;
     }
-
-    QSqlQuery query(m_database);
-    if (!query.exec("VACUUM")) {
-        logDatabaseError("Compact database", query.lastError());
-        return false;
-    }
-
-    qInfo() << "Database compacted successfully";
-    return true;
+    return m_sqlcipher->execute("VACUUM");
 }
 
 /**
@@ -619,24 +437,10 @@ bool DatabaseManager::checkIntegrity()
     if (!isConnected()) {
         return false;
     }
-
-    QSqlQuery query(m_database);
-    if (!query.exec("PRAGMA integrity_check")) {
-        logDatabaseError("Check integrity", query.lastError());
-        return false;
+    QList<QVariantMap> result = m_sqlcipher->query("PRAGMA integrity_check");
+    if (!result.isEmpty() && result.first().values().contains("ok")) {
+        return true;
     }
-
-    if (query.next()) {
-        QString result = query.value(0).toString();
-        if (result == "ok") {
-            qInfo() << "Database integrity check passed";
-            return true;
-        } else {
-            qCritical() << "Database integrity check failed:" << result;
-            return false;
-        }
-    }
-
     return false;
 }
 
@@ -687,8 +491,6 @@ bool DatabaseManager::rollbackTransaction()
  */
 bool DatabaseManager::createTables()
 {
-    QSqlQuery query(m_database);
-
     // 创建密码表
     QString createPasswordsTable = R"(
         CREATE TABLE IF NOT EXISTS passwords (
@@ -705,8 +507,8 @@ bool DatabaseManager::createTables()
         )
     )";
 
-    if (!query.exec(createPasswordsTable)) {
-        logDatabaseError("Create passwords table", query.lastError());
+    if (!m_sqlcipher->execute(createPasswordsTable)) {
+        qCritical() << "Failed to create passwords table:" << m_sqlcipher->lastError();
         return false;
     }
 
@@ -717,8 +519,8 @@ bool DatabaseManager::createTables()
         )
     )";
 
-    if (!query.exec(createVersionTable)) {
-        logDatabaseError("Create version table", query.lastError());
+    if (!m_sqlcipher->execute(createVersionTable)) {
+        qCritical() << "Failed to create version table:" << m_sqlcipher->lastError();
         return false;
     }
 
@@ -731,8 +533,8 @@ bool DatabaseManager::createTables()
     };
 
     for (const QString &index : indexes) {
-        if (!query.exec(index)) {
-            logDatabaseError("Create index", query.lastError());
+        if (!m_sqlcipher->execute(index)) {
+            qWarning() << "Failed to create index:" << m_sqlcipher->lastError();
             // 索引创建失败不是致命错误，继续执行
         }
     }
@@ -777,15 +579,9 @@ bool DatabaseManager::upgradeDatabase()
  */
 bool DatabaseManager::tableExists(const QString &tableName)
 {
-    QSqlQuery query(m_database);
-    query.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=:name");
-    query.bindValue(":name", tableName);
-    
-    if (query.exec() && query.next()) {
-        return true;
-    }
-    
-    return false;
+    QString sql = QString("SELECT name FROM sqlite_master WHERE type='table' AND name='%1'").arg(tableName);
+    QList<QVariantMap> result = m_sqlcipher->query(sql);
+    return !result.isEmpty();
 }
 
 /**
@@ -798,9 +594,9 @@ int DatabaseManager::getDatabaseVersion()
         return -1;
     }
     
-    QSqlQuery query(m_database);
-    if (query.exec("SELECT version FROM database_version LIMIT 1") && query.next()) {
-        return query.value(0).toInt();
+    QList<QVariantMap> result = m_sqlcipher->query("SELECT version FROM database_version LIMIT 1");
+    if (!result.isEmpty()) {
+        return result.first().value("version").toInt();
     }
     
     return -1;
@@ -813,20 +609,16 @@ int DatabaseManager::getDatabaseVersion()
  */
 bool DatabaseManager::setDatabaseVersion(int version)
 {
-    QSqlQuery query(m_database);
-    
     // 清空版本表
-    if (!query.exec("DELETE FROM database_version")) {
-        logDatabaseError("Clear version table", query.lastError());
+    if (!m_sqlcipher->execute("DELETE FROM database_version")) {
+        qCritical() << "Failed to clear version table:" << m_sqlcipher->lastError();
         return false;
     }
     
     // 插入新版本
-    query.prepare("INSERT INTO database_version (version) VALUES (:version)");
-    query.bindValue(":version", version);
-    
-    if (!query.exec()) {
-        logDatabaseError("Set database version", query.lastError());
+    QString insertSql = QString("INSERT INTO database_version (version) VALUES (%1)").arg(version);
+    if (!m_sqlcipher->execute(insertSql)) {
+        qCritical() << "Failed to set database version:" << m_sqlcipher->lastError();
         return false;
     }
     
@@ -834,42 +626,31 @@ bool DatabaseManager::setDatabaseVersion(int version)
 }
 
 /**
- * @brief 从查询结果创建密码项目对象
- * @param query 包含数据的查询对象
+ * @brief 从QVariantMap组装PasswordItem
+ * @param row 包含数据的QVariantMap
  * @return 密码项目指针
  */
-PasswordItem* DatabaseManager::createPasswordItemFromQuery(const QSqlQuery &query)
+PasswordItem* DatabaseManager::createPasswordItemFromMap(const QVariantMap &row)
 {
-    // 获取加密管理器实例
     CryptoManager *crypto = CryptoManager::instance();
     if (!crypto->isInitialized()) {
         qCritical() << "CryptoManager not initialized";
         return nullptr;
     }
-
     PasswordItem *item = new PasswordItem();
-    
-    item->setId(query.value("id").toInt());
-    item->setTitle(query.value("title").toString());
-    
-    // 解密敏感字段
-    QString encryptedUsername = query.value("username").toString();
-    QString encryptedPassword = query.value("password").toString();
-    QString encryptedNotes = query.value("notes").toString();
-    
-    QString decryptedUsername = crypto->decryptString(encryptedUsername);
-    QString decryptedPassword = crypto->decryptString(encryptedPassword);
-    QString decryptedNotes = crypto->decryptString(encryptedNotes);
-    
+    item->setId(row.value("id").toInt());
+    item->setTitle(row.value("title").toString());
+    QString decryptedUsername = crypto->decryptString(row.value("username").toString());
+    QString decryptedPassword = crypto->decryptString(row.value("password").toString());
+    QString decryptedNotes = crypto->decryptString(row.value("notes").toString());
     item->setUsername(decryptedUsername);
     item->setPassword(decryptedPassword);
-    item->setWebsite(query.value("website").toString());
+    item->setWebsite(row.value("website").toString());
     item->setNotes(decryptedNotes);
-    item->setCategory(query.value("category").toString());
-    item->setCreatedAt(query.value("created_at").toDateTime());
-    item->setUpdatedAt(query.value("updated_at").toDateTime());
-    item->setIsFavorite(query.value("is_favorite").toBool());
-    
+    item->setCategory(row.value("category").toString());
+    item->setCreatedAt(row.value("created_at").toDateTime());
+    item->setUpdatedAt(row.value("updated_at").toDateTime());
+    item->setIsFavorite(row.value("is_favorite").toBool());
     return item;
 }
 
@@ -906,25 +687,53 @@ QString DatabaseManager::getDefaultDatabasePath() const
  */
 bool DatabaseManager::setDatabasePassword(const QString &password)
 {
-    if (!isConnected() || password.isEmpty()) {
+    if (password.isEmpty()) {
         return false;
     }
 
-    QSqlQuery query(m_database);
-    
-    // 设置数据库密码
-    query.prepare("PRAGMA key = ?");
-    query.addBindValue(password);
-    
-    if (!query.exec()) {
-        logDatabaseError("Set database password", query.lastError());
-        return false;
+    // 如果数据库未连接，先连接数据库
+    if (!isConnected()) {
+        if (!m_sqlcipher->openDatabase(m_databasePath)) {
+            qCritical() << "Failed to open SQLCipher database:" << m_sqlcipher->lastError();
+            return false;
+        }
     }
 
-    // 验证密码是否正确
-    if (!query.exec("SELECT count(*) FROM sqlite_master")) {
-        logDatabaseError("Verify database password", query.lastError());
-        return false;
+    // 检查数据库是否为空（新数据库）
+    // 对于新数据库，sqlite_master查询可能会失败，所以我们先尝试设置密码
+    bool isEmpty = false;
+    QList<QVariantMap> result = m_sqlcipher->query("SELECT count(*) FROM sqlite_master");
+    if (result.isEmpty()) {
+        // 查询失败，可能是新数据库
+        isEmpty = true;
+    } else {
+        isEmpty = result.first().value("count(*)").toInt() == 0;
+    }
+    
+    if (isEmpty) {
+        // 新数据库：设置密码并创建表
+        if (!m_sqlcipher->setPassword(password)) {
+            qCritical() << "Failed to set database password for new database:" << m_sqlcipher->lastError();
+            return false;
+        }
+        
+        // 创建表结构
+        if (!createTables()) {
+            qCritical() << "Failed to create tables after encryption";
+            return false;
+        }
+        
+        // 设置数据库版本
+        if (!setDatabaseVersion(DATABASE_VERSION)) {
+            qCritical() << "Failed to set database version";
+            return false;
+        }
+    } else {
+        // 现有数据库：验证密码
+        if (!m_sqlcipher->verifyPassword(password)) {
+            qCritical() << "Failed to verify database password:" << m_sqlcipher->lastError();
+            return false;
+        }
     }
 
     m_currentPassword = password;
@@ -945,20 +754,8 @@ bool DatabaseManager::verifyDatabasePassword(const QString &password)
         return false;
     }
 
-    QSqlQuery query(m_database);
-    
-    // 设置数据库密码
-    query.prepare("PRAGMA key = ?");
-    query.addBindValue(password);
-    
-    if (!query.exec()) {
-        logDatabaseError("Set database password for verification", query.lastError());
-        return false;
-    }
-
-    // 验证密码是否正确
-    if (!query.exec("SELECT count(*) FROM sqlite_master")) {
-        logDatabaseError("Verify database password", query.lastError());
+    if (!m_sqlcipher->verifyPassword(password)) {
+        qCritical() << "Failed to verify database password:" << m_sqlcipher->lastError();
         return false;
     }
 
@@ -981,19 +778,8 @@ bool DatabaseManager::changeDatabasePassword(const QString &oldPassword, const Q
         return false;
     }
 
-    // 首先验证旧密码
-    if (!verifyDatabasePassword(oldPassword)) {
-        return false;
-    }
-
-    QSqlQuery query(m_database);
-    
-    // 更改数据库密码
-    query.prepare("PRAGMA rekey = ?");
-    query.addBindValue(newPassword);
-    
-    if (!query.exec()) {
-        logDatabaseError("Change database password", query.lastError());
+    if (!m_sqlcipher->changePassword(oldPassword, newPassword)) {
+        qCritical() << "Failed to change database password:" << m_sqlcipher->lastError();
         return false;
     }
 
@@ -1009,5 +795,14 @@ bool DatabaseManager::changeDatabasePassword(const QString &oldPassword, const Q
  */
 bool DatabaseManager::isDatabaseEncrypted() const
 {
-    return m_isEncrypted;
+    return m_sqlcipher->isEncrypted();
+}
+
+/**
+ * @brief 获取数据库文件路径
+ * @return 数据库文件路径
+ */
+QString DatabaseManager::getDatabasePath() const
+{
+    return m_databasePath;
 } 

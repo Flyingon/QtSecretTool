@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QStandardPaths>
 
@@ -41,8 +42,22 @@ PasswordManager::PasswordManager(QObject *parent)
  */
 bool PasswordManager::hasMasterPassword() const
 {
-    QSettings settings;
-    return !settings.value("master_password_set").toString().isEmpty();
+    // 检查数据库文件是否存在
+    QString dbPath = m_databaseManager->getDatabasePath();
+    if (!QFile::exists(dbPath)) {
+        // 数据库文件不存在，肯定没有设置主密码
+        return false;
+    }
+    
+    // 检查数据库文件大小，如果文件存在且大于0字节，说明已经设置过主密码
+    QFileInfo fileInfo(dbPath);
+    if (fileInfo.size() > 0) {
+        return true;
+    }
+    
+    // 如果文件存在但为空，删除它并返回false
+    QFile::remove(dbPath);
+    return false;
 }
 
 /**
@@ -57,15 +72,24 @@ bool PasswordManager::setMasterPassword(const QString &password)
         return false;
     }
 
-    // 初始化加密管理器
-    if (!m_cryptoManager->initialize(password)) {
-        setLastError("初始化加密管理器失败");
+    // 先打开数据库
+    if (!m_databaseManager->openDatabase(m_databaseManager->getDatabasePath())) {
+        setLastError("打开数据库失败");
         return false;
     }
 
     // 设置数据库密码（SQLCipher）
     if (!m_databaseManager->setDatabasePassword(password)) {
         setLastError("设置数据库密码失败");
+        return false;
+    }
+
+    // 创建表结构（新库）
+    m_databaseManager->createTables();
+
+    // 初始化加密管理器
+    if (!m_cryptoManager->initialize(password)) {
+        setLastError("初始化加密管理器失败");
         return false;
     }
 
@@ -87,6 +111,12 @@ bool PasswordManager::verifyMasterPassword(const QString &password)
 {
     if (password.isEmpty()) {
         setLastError("主密码不能为空");
+        return false;
+    }
+
+    // 先打开数据库
+    if (!m_databaseManager->openDatabase(m_databaseManager->getDatabasePath())) {
+        setLastError("打开数据库失败");
         return false;
     }
 

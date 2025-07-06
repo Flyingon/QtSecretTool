@@ -7,8 +7,10 @@
 #include <QSqlError>
 #include <QString>
 #include <QList>
+#include <QVariantMap>
 #include "models/PasswordItem.h"
 #include "crypto/CryptoManager.h"
+#include "SQLCipherWrapper.h"
 
 /**
  * @brief 数据库管理类
@@ -61,6 +63,12 @@ public:
      * @return 如果数据库已加密则返回true
      */
     bool isDatabaseEncrypted() const;
+
+    /**
+     * @brief 获取数据库文件路径
+     * @return 数据库文件路径
+     */
+    QString getDatabasePath() const;
 
     /**
      * @brief 关闭数据库连接
@@ -186,6 +194,26 @@ public:
      */
     bool rollbackTransaction();
 
+    /**
+     * @brief 从QVariantMap组装密码项目对象
+     * @param row 包含数据的QVariantMap
+     * @return 密码项目指针
+     */
+    PasswordItem* createPasswordItemFromMap(const QVariantMap &row);
+
+    /**
+     * @brief 打开数据库连接（不做任何SQL操作）
+     * @param databasePath 数据库文件路径
+     * @return 是否成功
+     */
+    bool openDatabase(const QString &databasePath);
+
+    /**
+     * @brief 创建数据库表结构
+     * @return 创建是否成功
+     */
+    bool createTables();
+
 signals:
     /**
      * @brief 数据库错误信号
@@ -217,16 +245,11 @@ private:
 
     static DatabaseManager *s_instance;  // 单例实例
 
-    QSqlDatabase m_database;             // 数据库连接
+    QSqlDatabase m_database;             // 数据库连接（用于兼容性）
+    SQLCipherWrapper *m_sqlcipher;       // SQLCipher封装
     QString m_databasePath;              // 数据库文件路径
     bool m_isEncrypted;                  // 数据库是否已加密
     QString m_currentPassword;           // 当前数据库密码
-
-    /**
-     * @brief 创建数据库表结构
-     * @return 创建是否成功
-     */
-    bool createTables();
 
     /**
      * @brief 升级数据库结构（用于版本迁移）
@@ -253,13 +276,6 @@ private:
      * @return 设置是否成功
      */
     bool setDatabaseVersion(int version);
-
-    /**
-     * @brief 从查询结果创建密码项目对象
-     * @param query 包含数据的查询对象
-     * @return 密码项目指针
-     */
-    PasswordItem* createPasswordItemFromQuery(const QSqlQuery &query);
 
     /**
      * @brief 记录数据库错误并发出信号

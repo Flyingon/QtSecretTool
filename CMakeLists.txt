@@ -28,6 +28,7 @@ set(SOURCES
     src/models/PasswordItem.cpp
     src/models/PasswordListModel.cpp
     src/database/DatabaseManager.cpp
+    src/database/SQLCipherWrapper.cpp
     src/crypto/CryptoManager.cpp
 )
 
@@ -38,6 +39,7 @@ set(HEADERS
     src/models/PasswordItem.h
     src/models/PasswordListModel.h
     src/database/DatabaseManager.h
+    src/database/SQLCipherWrapper.h
     src/crypto/CryptoManager.h
 )
 
